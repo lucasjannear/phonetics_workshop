@@ -1,0 +1,357 @@
+---
+title: "Corpus phonetics workshop"
+output:
+  html_document:
+    df_print: paged
+---
+
+# Load libraries
+
+Clear objects from environment and load libraries.
+
+```{r Load Libraries, message=FALSE, warning=FALSE}
+rm(list = ls())
+library(tidyverse)
+library(readtextgrid)
+library(tools)
+library(readr)
+#library(tjm.praat)
+
+# For processing textgrids in parallel
+library(future)
+library(future.apply)
+plan(multisession, workers = parallel::detectCores() - 1)
+```
+
+# Read data from textgrids
+
+```{r Load data from network}
+# define the primary directory for textgrids
+data_dir <- "C:/Users/lucas/Documents/PhD/projects/phonetics_workshop/long_recordings"
+
+# create a dataframe called "data" that will contain information from the textgrids
+data <- file.path(data_dir) |> 
+  # Get the speaker folders 
+  fs::dir_ls(type = "dir") |> 
+  # Look through each folder for textgrids 
+  fs::dir_ls(regexp = "/*.TextGrid") |> 
+  # apply read_textgrid() to each TextGrid file
+  future_lapply(read_textgrid) |> 
+  bind_rows() |>
+  # create new columns based on info in filenames
+  mutate(speaker = substr(file, 1, 4),
+         task = str_sub(basename(file), 6),
+         sex = substr(file, 1, 1)) |>
+  # pivot the data frame so that each sound is structured as part of a word
+  pivot_textgrid_tiers(tiers = c("words", "phones"),
+                       join_cols = c("sex", "speaker", "task", "file")) |>
+  group_by(speaker, file, words, words_annotation_num) |> 
+    mutate(
+      # number the phones so that, e.g., we can tell apart the
+      # /B/s in BABY
+      phones_position = dplyr::row_number(phones_xmid),
+      #calculate the total number of phones in each word
+      phones_total_annotations = sum(phones != "")
+    ) |> 
+    ungroup() |>
+  filter(phones != "sil", phones != "")
+
+# If you are reading many many textgrids, it can be handy to save the data as a CSV
+# for future work.
+# write_csv(data, "workshop_data.csv")
+```
+
+# Read data from .csv
+
+If you are not able to use `read_textgrid()` for whatever reason and still want to follow along, you can read in the data from the provided. `.csv` document. (Just delete the "\#" symbol in front of the code line in the next code chunk).
+
+```{r}
+#data <- read_csv("workshop_data.csv")
+```
+
+# Transform data
+
+At this point we have read in the textgrids (either from the textgrids directly or from the provided `.csv`) and added a few variables such as `speaker`, `task`, and `sex`. Now we'll add further variables that are useful, including `seg_type`, `poa` (place of articulation), `voicing`, etc.
+
+At the bottom of this code chunk we also add columns for each sound that indicate what the previous and following sounds are. Together with the column indicating the number for each sound in the word, `prev_seg` and `next_seg` are very useful for identifying environments such as clusters vs singletons. The section on initial stops will show how to create a list of all word-initial stops in the corpus.
+
+```{r Add other variables}
+#add columns for segment type, voicing, manner, etc.
+data <- data |>
+  mutate(
+    phones_duration = phones_xmax - phones_xmin,
+    words_duration = words_xmax - words_xmin,
+    task_type = ifelse(substr(task, 1, 4) == "rain", "read", "spontaneous"),
+    seg_type = case_when(
+           phones == 'B' ~ 'stop',
+           phones == 'D' ~ 'stop',
+           phones == 'G' ~ 'stop',
+           phones == 'P' ~ 'stop',
+           phones == 'T' ~ 'stop',
+           phones == 'K' ~ 'stop',
+           phones == 'CH' ~ 'affricate',
+           phones == 'JH' ~ 'affricate',
+           phones == 'F' ~ 'fricative',
+           phones == 'V' ~ 'fricative',
+           phones == 'DH' ~ 'fricative',
+           phones == 'TH' ~ 'fricative',
+           phones == 'S' ~ 'fricative',
+           phones == 'Z' ~ 'fricative',
+           phones == 'SH' ~ 'fricative',
+           phones == 'ZH' ~ 'fricative',
+           phones == 'HH' ~ 'fricative',
+           phones == 'L' ~ 'liquid',
+           phones == 'R' ~ 'liquid',
+           phones == 'N' ~ 'nasal',
+           phones == 'M' ~ 'nasal',
+           phones == 'NG' ~ 'nasal',
+           phones == 'W' ~ 'glide',
+           phones == 'Y' ~ 'glide',
+           startsWith(as.character(phones), "A") ~ 'vowel',
+           startsWith(as.character(phones), "E") ~ 'vowel',
+           startsWith(as.character(phones), "I") ~ 'vowel',
+           startsWith(as.character(phones), "O") ~ 'vowel',
+           startsWith(as.character(phones), "U") ~ 'vowel'
+           ),
+         poa = case_when(
+           phones == 'B' ~ 'labial',
+           phones == 'D' ~ 'alveolar',
+           phones == 'G' ~ 'velar',
+           phones == 'P' ~ 'labial',
+           phones == 'T' ~ 'alveolar',
+           phones == 'K' ~ 'velar',
+           phones == 'CH' ~ 'post_alv',
+           phones == 'JH' ~ 'post_alv',
+           phones == 'F' ~ 'lab_dent',
+           phones == 'V' ~ 'lab_dent',
+           phones == 'DH' ~ 'inter_dent',
+           phones == 'TH' ~ 'inter_dent',
+           phones == 'S' ~ 'alveolar',
+           phones == 'Z' ~ 'alveolar',
+           phones == 'SH' ~ 'post_alv',
+           phones == 'ZH' ~ 'post_alv',
+           phones == 'HH' ~ 'glottal',
+           phones == 'L' ~ 'lateral',
+           phones == 'R' ~ 'rhotic',
+           phones == 'N' ~ 'alveolar',
+           phones == 'M' ~ 'labial',
+           phones == 'NG' ~ 'velar',
+           phones == 'W' ~ 'lab_vel',
+           phones == 'Y' ~ 'palatal'
+           ),
+         voicing = case_when(
+           phones == 'B' ~ 'voiced',
+           phones == 'D' ~ 'voiced',
+           phones == 'G' ~ 'voiced',
+           phones == 'P' ~ 'voiceless',
+           phones == 'T' ~ 'voiceless',
+           phones == 'K' ~ 'voiceless',
+           phones == 'CH' ~ 'voiceless',
+           phones == 'JH' ~ 'voiced',
+           phones == 'F' ~ 'voiceless',
+           phones == 'V' ~ 'voiced',
+           phones == 'DH' ~ 'voiced',
+           phones == 'TH' ~ 'voiceless',
+           phones == 'S' ~ 'voiceless',
+           phones == 'Z' ~ 'voiced',
+           phones == 'SH' ~ 'voiceless',
+           phones == 'ZH' ~ 'voiced',
+           phones == 'HH' ~ 'voiceless',
+           phones == 'L' ~ 'voiced',
+           phones == 'R' ~ 'voiced',
+           phones == 'N' ~ 'voiced',
+           phones == 'M' ~ 'voiced',
+           phones == 'NG' ~ 'voiced',
+           phones == 'W' ~ 'voiced',
+           phones == 'Y' ~ 'voiced'
+           )
+         )
+
+data <- data |>
+  mutate(
+    prev_seg = lag(phones, n = 1),
+    next_seg = lead(phones, n = 1),
+    prev_seg_type = lag(seg_type, n = 1),
+    next_seg_type = lead(seg_type, n = 1)
+  ) |>
+  relocate(phones, .after = words) |>
+  relocate(prev_seg, .before = phones) |>
+  relocate(next_seg, .after = phones) |>
+  relocate(phones_total_annotations, .before = words)
+```
+
+# Checking the data
+
+It is useful to have certain checks to make sure your data is accurate. Opening the file and scanning through to make sure everything looks accurate is one way. Another way is systematic checks for errors. Doing both is a great idea.
+
+## Unaligned words
+
+One common error is when a word in the transcript is not in the alignment dictionary. These words will typically be unsegmented and labeled "spn" on the `phones` tier. Because there was not a pronunciation specified in the alignment dictionary, the Montreal Forced Aligner didn't know what sounds to segment the word into.
+
+```{r}
+filter(data, phones == "spn")
+```
+
+Because "spn" issues result in word with only one phone segment, another way to check this would be to look for words in the `words` column that are more than one character long and check that against the `phones_total_annotations` value.
+
+```{r}
+filter(data, nchar(words) > 1 & phones_total_annotations == 1) |>
+  select(speaker, file, words, phones_total_annotations, phones)
+```
+
+Although the words have two or more characters, it makes sense that they are only 1 phoneme long, so this check confirmed that we did not have issues on that front. This was just an example of things to look for, and there could be other important checks to do as well.
+
+# Initial stops
+
+You might want to identify word-initial stops for the purposes of measuring things like voice onset time. Here is an example of how to filter your data to get only observations (sounds) that are word-initial singleton stops followed by a stressed vowel. We make sure that:
+
+1.  `seg_type` is a "stop",
+
+2.  `phones_position` is "1", and
+
+3.  that `next_seg` is a stressed vowel (make sure the 3rd character for everything in the `next_seg` column is a "1", indicating primary stress).
+
+Here is the code to filter just those observations:
+
+```{r}
+# list of words  
+filter(data, seg_type == "stop" & phones_position == "1" & substr(next_seg, 3, 3) == "1")
+```
+
+## Plot by voicing
+
+Now we can use that code to make a plot of `phones_duration` for each of those observations.
+
+```{r}
+ggplot() +
+  geom_jitter(data = filter(data, seg_type == "stop" & phones_position == "1" & 
+                              substr(next_seg, 3, 3) == "1"),
+             aes(x = voicing, y = phones_duration, color = task), 
+             alpha = 0.5,
+             height = 0) +
+  facet_wrap(vars(speaker))
+```
+
+### Check long VOT
+
+There was one VOT item for f_01. We can use the same filtering that we used above to filter out word-initial stops and add another condition that filters out only word-initial stops that are long than 0.6 seconds so we can look at that observation in Praat to see what's going on.
+
+```{r}
+filter(data, seg_type == "stop" & phones_position == "1" & substr(next_seg, 3, 3) == "1" & phones_duration > 0.6)
+```
+
+## Summary by speaker
+
+Both speakers read the same Rainbow Passage, so there should be the same number of word-initial voiced and voiceless stops in that task. But what about the re-telling of Frog Where Are You? We can do the same filtering of word-initial stops that we did before, group them by task\>speaker\>voicing, and use `summarize()` together with `n()` to see how many word-initial stops each speaker produced in each voicing condition.
+
+```{r}
+# number of tokens per speaker
+filter(data, seg_type == "stop" & phones_position == "1" & substr(next_seg, 3, 3) == "1") |>
+  group_by(task, speaker, voicing) |>
+  summarize(n())
+```
+
+# Speech rate
+
+It's very practical to have a measure of speech rate for a number of reasons. This section shows how to calculate articulation rate in several common ways.
+
+## Syllables per second by file
+
+This calculates speech rate by speaker for each file/task.
+
+```{r}
+data |>
+  ungroup() |>
+  group_by(speaker, task_type) |>
+  summarise(
+    file_dur = sum(phones_duration),
+    vowels = sum(seg_type == "vowel"),
+    sylls_sec = (sum(seg_type == "vowel"))/(sum(phones_duration))
+  ) |>
+  mutate(
+    alt_rate = vowels/file_dur
+  ) |>
+  ungroup()
+```
+
+## Syllables per second by word
+
+This calculates the speech rate in terms of syllables per second and segments per second for each word, a more fine-grained measure of rate. This new summarized data will be saved as `rate_data` so we can use it for other purposes.
+
+```{r}
+# by speaker and individual word (are there word length effects on syllable rate?)
+# word length in vowels
+rate_data <- data |>
+  ungroup() |>
+  group_by(speaker, task_type, file, words, words_annotation_num) |>
+  summarise(word_length_vows = sum(seg_type == "vowel"), #vowels per word
+            word_length_segs = sum(seg_type != ""), #segments per word
+            word_dur = sum(phones_duration)
+            ) |>
+  arrange(words_annotation_num) |>
+  mutate(
+    word_rate_vows = (word_length_vows/word_dur),
+    word_rate_segs = (word_length_segs/word_dur)
+  ) |>
+  ungroup()
+```
+
+## Rate summary by speaker
+
+```{r}
+rate_data |>
+  group_by(speaker, task_type) |>
+  summarise(
+    mean_rate_vows = mean(word_rate_vows),
+    mean_rate_segs = mean(word_rate_segs)
+  )
+```
+
+## Speech rate plots
+
+### Rate and syllables per word
+
+```{r}
+ggplot() +
+  geom_jitter(data = rate_data,
+              aes(x = word_length_vows, 
+                  y = word_rate_vows, 
+                  color = task_type,
+                  group = task_type),
+              position = position_dodge(width = 0.5),
+              alpha = 0.3
+              ) +
+  facet_wrap(vars(speaker))
+```
+
+### Speech rate and segments per word
+
+```{r}
+ggplot() +
+  geom_jitter(data = rate_data,
+              aes(x = word_length_segs, 
+                  y = word_rate_segs, 
+                  color = speaker),
+              alpha = 0.3
+              ) +
+  facet_wrap(vars(speaker)) +
+  labs(
+    x = "Segments per word",
+    y = "Segments per second"
+  )
+```
+
+### Correlation between syllables per second and segments per second
+
+```{r}
+ggplot() +
+  geom_point(data = rate_data,
+             aes(x = word_length_segs, y = word_rate_segs,
+                 color = speaker),
+             alpha = 0.25) +
+  labs(
+    x = "Vowels per second",
+    y = "Segments per second"
+  ) +
+  facet_wrap(vars(task_type))
+```
