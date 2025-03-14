@@ -25,6 +25,8 @@ plan(multisession, workers = parallel::detectCores() - 1)
 
 # Read data from textgrids
 
+This stage uses the `readtextgrid` package from TJ Mahr. For documentation see: <https://github.com/tjmahr/readtextgrid>
+
 ```{r Load data from network}
 # define the primary directory for textgrids
 data_dir <- "C:/Users/lucas/Documents/PhD/projects/phonetics_workshop/long_recordings"
