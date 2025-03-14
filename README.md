@@ -1,5 +1,5 @@
-Title: Tools, Strategies, and Resources in Corpus Phonetics
-Authors: Luke Annear and Emily Bagan
+Title: Tools, Strategies, and Resources in Corpus Phonetics 
+Authors: Luke Annear and Emily Bagan 
 Presented at: Workshop in General Linguistics 2025
 
 This repository contains files and subdirectories for generating all data presented in the workshop.
